@@ -1,9 +1,6 @@
-import { ofetch, type FetchOptions, type FetchRequest } from "ofetch";
-import {
-  type SafeResult,
-  RequestError,
-  type ClientConfig,
-} from "./types/client";
+import { ofetch, type FetchOptions, type FetchRequest, type FetchError } from "ofetch";
+import { type SafeResult, RequestError, type ClientConfig } from "./types/client";
+export type { SafeResult } from "./types/client";
 
 /**
  * HTTP Client class with ofetch compatibility
@@ -12,14 +9,31 @@ export class Client {
   private fetchInstance: typeof ofetch;
   public readonly config: ClientConfig;
 
-  constructor(config: ClientConfig) {
-    this.config = config;
+  constructor(config: ClientConfig = {}) {
+    // Resolve configuration with environment variables
+    const resolvedConfig: ClientConfig = {
+      ...config,
+      apiKey: config.apiKey || process.env.PHALA_CLOUD_API_KEY,
+      baseURL:
+        config.baseURL ||
+        process.env.PHALA_CLOUD_API_PREFIX ||
+        "https://cloud-api.phala.network/v1",
+    };
+
+    this.config = resolvedConfig;
+
+    // Validate that we have an API key
+    if (!resolvedConfig.apiKey) {
+      throw new Error(
+        "API key is required. Provide it via config.apiKey or set PHALA_CLOUD_API_KEY environment variable.",
+      );
+    }
 
     // Extract our custom options and pass the rest to ofetch
-    const { apiKey, baseURL, timeout, headers, ...fetchOptions } = config;
+    const { apiKey, baseURL, timeout, headers, ...fetchOptions } = resolvedConfig;
 
     this.fetchInstance = ofetch.create({
-      baseURL: baseURL || "https://cloud-api.phala.network/v1",
+      baseURL,
       timeout: timeout || 30000,
       headers: {
         "X-API-Key": apiKey,
@@ -125,17 +139,13 @@ export class Client {
   /**
    * Safe wrapper for any request method (zod-style result)
    */
-  private async safeRequest<T>(
-    fn: () => Promise<T>,
-  ): Promise<SafeResult<T, RequestError>> {
+  private async safeRequest<T>(fn: () => Promise<T>): Promise<SafeResult<T, RequestError>> {
     try {
       const data = await fn();
       return { success: true, data };
     } catch (error) {
       if (error && typeof error === "object" && "data" in error) {
-        const requestError = RequestError.fromFetchError(
-          error as import("ofetch").FetchError,
-        );
+        const requestError = RequestError.fromFetchError(error as FetchError);
         return { success: false, error: requestError };
       }
       if (error instanceof Error) {
@@ -205,8 +215,23 @@ export class Client {
 
 /**
  * Create a new HTTP client instance
- * Compatible with ofetch.create() parameters plus additional API-specific options
+ *
+ * Configuration can be provided via parameters or environment variables:
+ * - PHALA_CLOUD_API_KEY: API key for authentication
+ * - PHALA_CLOUD_API_PREFIX: Base URL prefix for the API
+ *
+ * @example
+ * ```typescript
+ * // Using explicit configuration
+ * const client = createClient({
+ *   apiKey: 'your-api-key',
+ *   baseURL: 'https://custom-api.example.com'
+ * })
+ *
+ * // Using environment variables (set PHALA_CLOUD_API_KEY)
+ * const client = createClient()
+ * ```
  */
-export function createClient(config: ClientConfig): Client {
+export function createClient(config: ClientConfig = {}): Client {
   return new Client(config);
 }
